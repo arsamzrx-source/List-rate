@@ -18333,6 +18333,87 @@ const THEME_SONGS=[
   document.addEventListener('visibilitychange',()=>{ if(au&&curId){ if(document.hidden) au.pause(); else if(!muted&&modal.classList.contains('show')) au.play().catch(()=>{}); } });
 })();
 
+
+/* ===== جداسازی حساب‌ها + بازگردانی امن (جلوگیری از قاطی‌شدن لیست‌ها موقع عوض‌کردن اکانت) ===== */
+let _acctLock=null;
+async function acctVaultGet(uid){ const rec=await _tx('mirror','readonly',st=>st.get('vault:'+uid)); return rec&&rec.json?JSON.parse(rec.json):null; }
+async function acctVaultPut(uid,state){ return _tx('mirror','readwrite',st=>st.put({json:JSON.stringify(state),ts:Date.now()},'vault:'+uid)); }
+async function acctGuard(){
+  if(VIEW_ONLY||typeof currentCloudUser==='undefined'||!currentCloudUser) return;
+  if(_acctLock) return _acctLock;
+  _acctLock=(async()=>{
+    const uid=currentCloudUser.id;
+    let owner=null;
+    try{ owner=localStorage.getItem('pimdb_owner_uid'); }catch(_e){}
+    if(!owner){ try{ const b=JSON.parse(localStorage.getItem(SYNC_BASE_KEY)||'null'); if(b&&b.uid) owner=b.uid; }catch(_e){} }
+    if(!owner||owner===uid){ try{ localStorage.setItem('pimdb_owner_uid',uid); }catch(_e){} return; }
+    /* اکانت عوض شده: داده‌ی اکانت قبلی جدا نگه داشته می‌شه و با اکانت جدید قاطی نمی‌شه */
+    try{
+      if(hasMeaningfulLocalData()){ await acctVaultPut(owner,_syncLocalState()); try{ await safeAutoSnapshot(true); }catch(_e){} }
+    }catch(e){ console.warn('vault put',e); }
+    let next=null; try{ next=await acctVaultGet(uid); }catch(_e){}
+    const empty={lists:[{id:'default',name:'عمومی',color:'#ffc107',online:true,series:false}],items:[],itemOrder:{},listPrefs:{},listSeps:[],ratingBands:ratingBands,collections:[],profile:null};
+    const st=Object.assign({},empty,next||{});
+    if(!Array.isArray(st.lists)||!st.lists.length) st.lists=empty.lists;
+    if(!Array.isArray(st.items)) st.items=[];
+    _syncApplyLocal(st);
+    try{ localStorage.removeItem(SYNC_BASE_KEY); localStorage.removeItem(SYNC_STAMP_KEY); localStorage.removeItem('pimdb_force_overwrite'); localStorage.setItem('pimdb_owner_uid',uid); }catch(_e){}
+    clearLocalDirty();
+    toast('اکانت عوض شد؛ لیست‌های اکانت قبلی جدا نگه داشته شد و قاطی نمی‌شه');
+  })();
+  try{ await _acctLock; } finally { _acctLock=null; }
+}
+async function forcePushLocalToCloud(manual){
+  if(VIEW_ONLY) return false;
+  if(!currentCloudUser){ if(manual) toast('اول وارد شو'); return false; }
+  if(!navigator.onLine){ if(manual) toast('آفلاین هستی'); return false; }
+  if(!hasMeaningfulLocalData()){ if(manual) toast('روی این دستگاه داده‌ای نیست'); return false; }
+  if(manual && !confirm('داده‌ی ابرِ این حساب با داده‌ی همین دستگاه جایگزین بشه؟\nاین کار برگشت نداره.')) return false;
+  try{
+    const ur=await supabaseClient.auth.getUser(); const user=ur&&ur.data&&ur.data.user; if(!user) return false;
+    const st=_syncLocalState(); const stamp=new Date().toISOString();
+    const payload=JSON.parse(JSON.stringify({lists:st.lists,items:st.items,itemOrder:st.itemOrder,listPrefs:st.listPrefs,listSeps:st.listSeps,ratingBands:st.ratingBands,collections:st.collections,profile:st.profile,presence:{devices:{}},tomb:{}}));
+    const r=await supabaseClient.from('user_data').upsert({user_id:user.id,data:payload,updated_at:stamp},{onConflict:'user_id'});
+    if(r.error){ toast('خطا در جایگزینی ابر: '+(r.error.message||'')); return false; }
+    _syncSetBase(st,user.id,stamp);
+    try{ localStorage.setItem(SK.lastSync,String(Date.now())); localStorage.removeItem('pimdb_force_overwrite'); localStorage.setItem('pimdb_owner_uid',user.id); }catch(_e){}
+    clearLocalDirty();
+    toast('ابر با داده‌ی این دستگاه جایگزین شد ✓ ('+fa((items||[]).length)+' آیتم)');
+    return true;
+  }catch(e){ console.warn('forcePush',e); toast('جایگزینی ابر ناموفق بود'); return false; }
+}
+(function(){
+  if(VIEW_ONLY) return;
+  const __engine=cloudSyncEngine;
+  cloudSyncEngine=async function(opts){
+    try{ await acctGuard(); }catch(e){ console.warn(e); }
+    try{
+      if(localStorage.getItem('pimdb_force_overwrite')==='1' && currentCloudUser){ const ok=await forcePushLocalToCloud(false); if(ok) return true; }
+    }catch(_e){}
+    return __engine.call(this,opts);
+  };
+  const __login=syncCloudOnLogin;
+  syncCloudOnLogin=async function(opts){ try{ await acctGuard(); }catch(e){ console.warn(e); } return __login.call(this,opts); };
+  /* بعد از «جایگزینی کامل» از فایل پشتیبان، ابر هم با همان داده جایگزین می‌شود (وگرنه «سنگ‌قبر»های ابر دوباره همه‌چیز را پاک می‌کردند) */
+  const rb=document.getElementById('importReplace');
+  if(rb) rb.addEventListener('click',()=>{
+    setTimeout(()=>{
+      try{
+        if(pendingImport===null && hasMeaningfulLocalData()){
+          localStorage.setItem('pimdb_force_overwrite','1');
+          if(currentCloudUser) forcePushLocalToCloud(false);
+        }
+      }catch(_e){}
+    },1500);
+  });
+  const menu=document.getElementById('sideMenu'); if(!menu) return;
+  const ref=document.getElementById('safeSnapBtn')||menu.querySelector('[data-action="export"]');
+  const b=document.createElement('button'); b.type='button'; b.className='item'; b.id='forcePushBtn';
+  b.innerHTML='<i class="fa-solid fa-cloud-arrow-up"></i> جایگزینی ابر با داده‌ی این دستگاه';
+  b.addEventListener('click',()=>{ try{ menu.classList.remove('show'); }catch(_e){} forcePushLocalToCloud(true); });
+  if(ref&&ref.parentNode) ref.parentNode.insertBefore(b,ref.nextSibling); else menu.appendChild(b);
+})();
+
 // Service Worker ساده برای کش فایل و پوسترها
 if('serviceWorker' in navigator && !VIEW_ONLY){
   const swCode=`
