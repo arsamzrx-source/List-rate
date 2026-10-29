@@ -4,10 +4,16 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - "README*"
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -20,31 +26,44 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Find site files and copy to www
+        run: |
+          IDX=$(find . -name index.html -not -path './node_modules/*' -not -path './android/*' -not -path './www/*' | awk '{print length, $0}' | sort -n | head -n 1 | cut -d' ' -f2-)
+          if [ -z "$IDX" ]; then echo "ERROR: index.html not found in repo"; ls -la; exit 1; fi
+          SRC=$(dirname "$IDX")
+          echo "Using web folder: $SRC"
+          ls -la "$SRC"
+          mkdir -p www
+          tar -C "$SRC" \
+            --exclude='./node_modules' --exclude='./android' --exclude='./www' \
+            --exclude='./.git' --exclude='./.github' \
+            --exclude='./package.json' --exclude='./package-lock.json' \
+            --exclude='./capacitor.config.json' --exclude='./README*' \
+            -cf - . | tar -C www -xf -
+          test -f www/index.html
+          echo "--- www content:"
+          ls -la www
+
       - name: Install Capacitor
         run: npm install
-
-      - name: Copy web files to www
-        run: |
-          mkdir -p www
-          cp index.html sw.js manifest.webmanifest www/
-          cp icon-*.png www/
-          cp -r audio www/
-          if [ -d fonts ]; then cp -r fonts www/; fi
 
       - name: Add Android project
         run: npx cap add android
 
       - name: Add notification permissions
         run: |
-          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <application#' android/app/src/main/AndroidManifest.xml
-          grep -n "uses-permission" android/app/src/main/AndroidManifest.xml
+          F=android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />\n</manifest>#' $F
+          cat $F
 
       - name: Sync
         run: npx cap sync android
 
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
