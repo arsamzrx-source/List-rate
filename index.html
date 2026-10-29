@@ -18388,7 +18388,13 @@ async function forcePushLocalToCloud(manual){
   cloudSyncEngine=async function(opts){
     try{ await acctGuard(); }catch(e){ console.warn(e); }
     try{
-      if(localStorage.getItem('pimdb_force_overwrite')==='1' && currentCloudUser){ const ok=await forcePushLocalToCloud(false); if(ok) return true; }
+      /* کاربر همین الان «جایگزینی کامل» زده: تا وقتی ابر اصلاح نشده، ادغامِ معمولی (که با سنگ‌قبرها دوباره همه‌چیز را پاک می‌کند) اجرا نشود */
+      if(localStorage.getItem('pimdb_import_pending')==='1'){
+        if(pendingImport!==null) localStorage.removeItem('pimdb_import_pending');       /* لغو شد یا هنوز تموم نشده */
+        else if(currentCloudUser){ localStorage.removeItem('pimdb_import_pending'); localStorage.setItem('pimdb_force_overwrite','1'); }
+        else localStorage.removeItem('pimdb_import_pending');
+      }
+      if(localStorage.getItem('pimdb_force_overwrite')==='1' && currentCloudUser){ const ok=await forcePushLocalToCloud(false); if(ok) return true; return false; }
     }catch(_e){}
     return __engine.call(this,opts);
   };
@@ -18396,6 +18402,7 @@ async function forcePushLocalToCloud(manual){
   syncCloudOnLogin=async function(opts){ try{ await acctGuard(); }catch(e){ console.warn(e); } return __login.call(this,opts); };
   /* بعد از «جایگزینی کامل» از فایل پشتیبان، ابر هم با همان داده جایگزین می‌شود (وگرنه «سنگ‌قبر»های ابر دوباره همه‌چیز را پاک می‌کردند) */
   const rb=document.getElementById('importReplace');
+  if(rb) rb.addEventListener('click',()=>{ try{ localStorage.setItem('pimdb_import_pending','1'); }catch(_e){} },true);
   if(rb) rb.addEventListener('click',()=>{
     setTimeout(()=>{
       try{
@@ -18412,6 +18419,39 @@ async function forcePushLocalToCloud(manual){
   b.innerHTML='<i class="fa-solid fa-cloud-arrow-up"></i> جایگزینی ابر با داده‌ی این دستگاه';
   b.addEventListener('click',()=>{ try{ menu.classList.remove('show'); }catch(_e){} forcePushLocalToCloud(true); });
   if(ref&&ref.parentNode) ref.parentNode.insertBefore(b,ref.nextSibling); else menu.appendChild(b);
+})();
+
+
+/* ===== ضد پاک‌شدن دسته‌جمعی: اگه همگام‌سازی بخواد بیشتر از نصف آیتم‌ها رو یکجا حذف کنه، قبلش می‌پرسه ===== */
+(function(){
+  if(VIEW_ONLY) return;
+  const __apply=_syncApplyLocal;
+  _syncApplyLocal=function(st){
+    try{
+      const cur=(items||[]).length, nxt=(st&&Array.isArray(st.items))?st.items.length:0;
+      if(cur>=5 && nxt<cur*0.5 && !window.__massDelOK){
+        try{ safeAutoSnapshot(true); }catch(_e){}
+        const ok=confirm('همگام‌سازی می‌خواد '+fa(cur-nxt)+' آیتم از '+fa(cur)+' آیتم این دستگاه رو حذف کنه.\n\nاگه خودت اینها رو جای دیگه حذف نکردی، «لغو» رو بزن.\n\nتأیید = حذف بشن\nلغو = نگه دار (ابر هم با داده‌ی این دستگاه اصلاح می‌شه)');
+        if(!ok){
+          window.__massDelBlocked=true;
+          setTimeout(async()=>{ try{ await forcePushLocalToCloud(false); }finally{ window.__massDelBlocked=false; } },600);
+          return;
+        }
+        window.__massDelOK=true; setTimeout(()=>{ window.__massDelOK=false; },20000);
+      }
+    }catch(e){ console.warn('massdel guard',e); }
+    return __apply.call(this,st);
+  };
+  const __push=_syncPush;
+  _syncPush=async function(user,payload,prevStamp){
+    try{
+      const cur=(items||[]).length, nxt=(payload&&Array.isArray(payload.items))?payload.items.length:0;
+      if(window.__massDelBlocked || (cur>=5 && nxt<cur*0.5 && !window.__massDelOK)){
+        return {error:{message:'ارسال متوقف شد: جلوگیری از پاک‌شدن دسته‌جمعی'}};
+      }
+    }catch(_e){}
+    return __push.call(this,user,payload,prevStamp);
+  };
 })();
 
 // Service Worker ساده برای کش فایل و پوسترها
