@@ -4554,7 +4554,7 @@ html .size-sm .item-card.case .body:has(.ntf-chip) .title{-webkit-line-clamp:1}
 
 <div class="toast" id="toast"></div>
 
-<script type="text/plain" id="themeAudio_lalaland" data-src="audio/lalaland.mp3"></script>
+<script type="text/plain" id="themeAudio_lalaland" data-src="lalaland.mp3"></script>
 <script type="text/plain" id="csShowcaseTpl">
 <!doctype html>
 <html lang="fa" dir="rtl"><head><meta charset="utf-8">
@@ -18267,7 +18267,8 @@ setTimeout(()=>{ try{ safeRemindBackup(); }catch(_e){} },9000);
 const THEME_SONGS=[
   { id:'themeAudio_lalaland', volume:0.55,
     match:it=>{ const t=String(it.title||'').toLowerCase().replace(/[^a-z0-9\u0600-\u06FF]/g,'');
-      return it.imdbID==='tt3783958' || t.includes('lalaland') || t.includes('لالالند'); } }
+      const t2=String(it.name||it.originalTitle||'').toLowerCase().replace(/[^a-z0-9\u0600-\u06FF]/g,'');
+      return it.imdbID==='tt3783958' || t.includes('lalaland') || t2.includes('lalaland') || t.includes('لالالند') || t.includes('لالا‌لند'); } }
 ];
 (function(){
   if(typeof VIEW_ONLY!=='undefined'&&VIEW_ONLY&&false) return;
@@ -18277,7 +18278,7 @@ const THEME_SONGS=[
   function b64ToUrl(id){
     if(urls[id]) return urls[id];
     const el=document.getElementById(id); if(!el) return null;
-    if(el.dataset&&el.dataset.src&&el.textContent.trim().length<200) return (urls[id]=el.dataset.src);
+    if(el.dataset&&el.dataset.src&&el.textContent.trim().length<200) return el.dataset.src;
     const bin=atob(el.textContent.trim()); const u8=new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
     return (urls[id]=URL.createObjectURL(new Blob([u8],{type:'audio/mpeg'})));
@@ -18290,7 +18291,9 @@ const THEME_SONGS=[
     if(btn) return btn;
     btn=document.createElement('button'); btn.type='button';
     btn.style.cssText='position:fixed;left:14px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:1200;width:42px;height:42px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.6);color:#fff;font-size:1.1rem;cursor:pointer;display:none';
-    btn.addEventListener('click',e=>{ e.stopPropagation(); muted=!muted; try{ localStorage.setItem('pimdb_theme_muted',muted?'1':'0'); }catch(_e){} paint(); if(au){ if(muted) au.pause(); else au.play().catch(()=>{}); } });
+    btn.addEventListener('click',e=>{ e.stopPropagation();
+      if(au && au.paused && !muted){ au.volume=0.55; au.play().then(()=>paint()).catch(()=>{ toast('پخش آهنگ ممکن نیست'); }); return; }
+      muted=!muted; try{ localStorage.setItem('pimdb_theme_muted',muted?'1':'0'); }catch(_e){} paint(); if(au){ if(muted) au.pause(); else au.play().catch(()=>{}); } });
     document.body.appendChild(btn); return btn;
   }
   function paint(){ const b=ensureBtn(); b.textContent=muted?'🔇':'🔊'; b.setAttribute('aria-label',muted?'پخش آهنگ':'قطع آهنگ'); }
@@ -18300,13 +18303,22 @@ const THEME_SONGS=[
     fade(a,0,400,()=>{ try{ a.pause(); a.currentTime=0; }catch(_e){} });
   }
   function start(def){
-    const url=b64ToUrl(def.id); if(!url) return;
+    const first=b64ToUrl(def.id); if(!first) return;
+    const cands=[first]; ['lalaland.mp3','audio/lalaland.mp3'].forEach(u=>{ if(!cands.includes(u)) cands.push(u); });
     if(curId===def.id && au && !au.paused) { paint(); ensureBtn().style.display='block'; return; }
     if(au){ try{ au.pause(); }catch(_e){} }
-    au=new Audio(url); au.loop=true; au.volume=0; curId=def.id;
-    paint(); ensureBtn().style.display='block';
-    if(muted) return;
-    au.play().then(()=>fade(au,def.volume,700)).catch(()=>{ /* مرورگر اجازه نداد؛ با دکمهٔ 🔊 پخش می‌شه */ });
+    curId=def.id; paint(); ensureBtn().style.display='block';
+    let i=0;
+    const mk=()=>{
+      const a=new Audio(cands[i]); a.loop=true; a.volume=0; a.preload='auto'; au=a;
+      a.onerror=()=>{ if(au!==a) return; i++; if(i<cands.length) mk(); else toast('فایل آهنگ پیدا نشد؛ lalaland.mp3 باید کنار index.html باشه'); };
+      if(muted) return;
+      a.play().then(()=>fade(a,def.volume,700)).catch(err=>{
+        if(au!==a) return;
+        if(err&&err.name==='NotAllowedError') toast('برای پخش آهنگ، دکمهٔ 🔊 پایین صفحه رو بزن');
+      });
+    };
+    mk();
   }
   function evaluate(){
     const open=modal.classList.contains('show');
