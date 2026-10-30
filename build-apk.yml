@@ -47,6 +47,23 @@ jobs:
       - name: Install Capacitor
         run: npm install
 
+      - name: Load Capacitor core in the page
+        run: |
+          python3 - <<'PY'
+          import re, shutil
+          shutil.copy('node_modules/@capacitor/core/dist/capacitor.js', 'www/capacitor.js')
+          p = 'www/index.html'
+          s = open(p, encoding='utf-8').read()
+          inj = ('<script src="capacitor.js"></script>\n'
+                 '<script>try{if(window.Capacitor&&Capacitor.registerPlugin&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()){'
+                 '["LocalNotifications","App"].forEach(function(n){if(!(Capacitor.Plugins&&Capacitor.Plugins[n]))Capacitor.registerPlugin(n)})}}catch(e){}</script>\n')
+          if 'src="capacitor.js"' not in s:
+              s = re.sub(r'<head[^>]*>', lambda m: m.group(0) + '\n' + inj, s, count=1)
+              open(p, 'w', encoding='utf-8').write(s)
+          PY
+          grep -c 'capacitor.js' www/index.html
+          ls -la www/capacitor.js
+
       - name: Add Android project
         run: npx cap add android
 
